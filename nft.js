@@ -1,4 +1,4 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, beginCell } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 function getClient() {
@@ -20,27 +20,54 @@ async function getMinterWallet() {
   return { wallet, keyPair, client };
 }
 
-async function uploadToNFTStorage(buffer, mimeType) {
-  const apiKey = process.env.NFT_STORAGE_KEY;
-  if (!apiKey) throw new Error('NFT_STORAGE_KEY not set');
-  const res = await fetch('https://api.nft.storage/upload', {
+async function uploadToPinata(buffer, mimeType, filename) {
+  const jwt = process.env.PINATA_JWT;
+  if (!jwt) throw new Error('PINATA_JWT not set');
+
+  const FormData = (await import('form-data')).default;
+  const form = new FormData();
+  form.append('file', buffer, { filename, contentType: mimeType });
+  form.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
+  form.append('pinataMetadata', JSON.stringify({ name: filename }));
+
+  const res = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': mimeType
+      'Authorization': `Bearer ${jwt}`,
+      ...form.getHeaders()
     },
-    body: buffer
+    body: form
   });
   const data = await res.json();
-  if (!data.ok) throw new Error('NFT.Storage failed: ' + JSON.stringify(data));
-  return `https://ipfs.io/ipfs/${data.value.cid}`;
+  if (!data.IpfsHash) throw new Error('Pinata failed: ' + JSON.stringify(data));
+  return `https://ipfs.io/ipfs/${data.IpfsHash}`;
 }
 
-async function generatePlateImage(chars, country, region) {
-  // ASCII only — no emoji, no cyrillic in SVG
-  const safeChars = (chars || '').toUpperCase().replace(/[^\x00-\x7F]/g, '?');
-  const safeCountry = (country || '').replace(/[^\x00-\x7F]/g, '?');
-  const safeRegion = (region || '').replace(/[^\x00-\x7F]/g, '');
+async function uploadJsonToPinata(obj, filename) {
+  const jwt = process.env.PINATA_JWT;
+  if (!jwt) throw new Error('PINATA_JWT not set');
+
+  const res = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${jwt}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      pinataContent: obj,
+      pinataMetadata: { name: filename },
+      pinataOptions: { cidVersion: 1 }
+    })
+  });
+  const data = await res.json();
+  if (!data.IpfsHash) throw new Error('Pinata JSON failed: ' + JSON.stringify(data));
+  return `https://ipfs.io/ipfs/${data.IpfsHash}`;
+}
+
+function generatePlateImage(chars, country, region) {
+  const safeChars = (chars || '').toUpperCase().replace(/[^\x20-\x7E]/g, '');
+  const safeCountry = (country || '').replace(/[^\x20-\x7E]/g, '');
+  const safeRegion = (region || '').replace(/[^\x20-\x7E]/g, '');
 
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200">',
@@ -53,43 +80,7 @@ async function generatePlateImage(chars, country, region) {
     '</svg>'
   ].join('');
 
-  return Buffer.from(svg, 'ascii');
-}
-
-async function uploadMetadata(plateKey, chars, country, region, imageUrl) {
-  // All ASCII — no cyrillic
-  const name = 'Plate ' + chars.toUpperCase() + (region ? ' ' + region : '');
-  const metadata = {
-    name: name,
-    description: 'CarzPlate NFT. Country: ' + country + '. Region: ' + (region || 'none') + '.',
-    image: imageUrl,
-    attributes: [
-      { trait_type: 'Country', value: country },
-      { trait_type: 'Region', value: region || 'None' },
-      { trait_type: 'Plate', value: chars.toUpperCase() }
-    ]
-  };
-  const buf = Buffer.from(JSON.stringify(metadata), 'utf-8');
-  return await uploadToNFTStorage(buf, 'application/json');
-}
-
-// Store string as snake cell chain (supports long strings)
-function storeStringInCell(str) {
-  const bytes = Buffer.from(str, 'utf-8');
-  const chunkSize = 127;
-  const chunks = [];
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    chunks.push(bytes.slice(i, i + chunkSize));
-  }
-  // Build from last chunk backwards
-  let cell = null;
-  for (let i = chunks.length - 1; i >= 0; i--) {
-    const b = beginCell();
-    b.storeBuffer(chunks[i]);
-    if (cell) b.storeRef(cell);
-    cell = b.endCell();
-  }
-  return cell || beginCell().endCell();
+  return Buffer.from(svg, 'utf-8');
 }
 
 async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
@@ -98,28 +89,27 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
 
     const { wallet, keyPair } = await getMinterWallet();
 
-    // 1. Generate image
-    const imgBuffer = await generatePlateImage(chars, country, region);
-    const imageUrl = await uploadToNFTStorage(imgBuffer, 'image/svg+xml');
+    // 1. Generate and upload image
+    const imgBuffer = generatePlateImage(chars, country, region);
+    const imageUrl = await uploadToPinata(imgBuffer, 'image/svg+xml', plateKey + '.svg');
     console.log('Image uploaded:', imageUrl);
 
     // 2. Upload metadata
-    const metadataUrl = await uploadMetadata(plateKey, chars, country, region, imageUrl);
+    const name = 'Plate ' + (chars || '').toUpperCase() + (region ? ' ' + region : '');
+    const metadata = {
+      name: name,
+      description: 'CarzPlate NFT. Country: ' + (country || '') + '. Region: ' + (region || 'none') + '.',
+      image: imageUrl,
+      attributes: [
+        { trait_type: 'Country', value: country || '' },
+        { trait_type: 'Region', value: region || 'None' },
+        { trait_type: 'Plate', value: (chars || '').toUpperCase() }
+      ]
+    };
+    const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 3. Build NFT content cell (TEP-64 off-chain)
-    const contentCell = beginCell()
-      .storeUint(0x01, 8) // off-chain marker
-      .storeRef(storeStringInCell(metadataUrl))
-      .endCell();
-
-    // 4. Build NFT item init (TEP-62 simplified)
-    const nftBody = beginCell()
-      .storeUint(0, 32)  // op = 0 (simple transfer)
-      .storeStringTail('CarzPlate NFT ' + chars.toUpperCase())
-      .endCell();
-
-    // 5. Send transaction
+    // 3. Send TON transaction
     const seqno = await wallet.getSeqno();
     await wallet.sendTransfer({
       seqno,
@@ -127,17 +117,18 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
       messages: [
         internal({
           to: wallet.address,
-          value: toNano('0.05'),
-          body: nftBody,
+          value: toNano('0.02'),
+          body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
           bounce: false
         })
       ]
     });
 
-    await new Promise(r => setTimeout(r, 8000));
+    await new Promise(r => setTimeout(r, 5000));
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-    const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org') + '/address/' + wallet.address.toString();
+    const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
+      + '/address/' + wallet.address.toString();
 
     return {
       ok: true,
