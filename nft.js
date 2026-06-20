@@ -42,17 +42,16 @@ async function uploadToNFTStorage(buffer, mimeType, filename) {
 
 // ── Сгенерировать картинку номера (SVG → PNG buffer) ──
 async function generatePlateImage(chars, country, region) {
-  const label = `${chars}${region ? ' | ' + region : ''}`;
-  const flag = { RU: '🇷🇺', UA: '🇺🇦', BY: '🇧🇾', KZ: '🇰🇿', US: '🇺🇸', DE: '🇩🇪', FR: '🇫🇷' }[country] || '🏁';
-
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200">
-    <rect width="600" height="200" rx="24" ry="24" fill="#fff" stroke="#222" stroke-width="8"/>
-    <rect x="12" y="12" width="576" height="176" rx="16" ry="16" fill="#f8f8f8" stroke="#ccc" stroke-width="2"/>
-    <text x="300" y="130" font-family="Arial Black,Arial,sans-serif" font-size="90" font-weight="900"
-      text-anchor="middle" fill="#111" letter-spacing="8">${chars.toUpperCase()}</text>
-    <text x="300" y="175" font-family="Arial,sans-serif" font-size="22"
-      text-anchor="middle" fill="#555">${country}${region ? ' · ' + region : ''}</text>
-    <text x="40" y="60" font-size="36">${flag}</text>
+    <rect width="600" height="200" rx="24" ry="24" fill="#ffffff" stroke="#222222" stroke-width="8"/>
+    <rect x="12" y="12" width="576" height="176" rx="16" ry="16" fill="#f8f8f8" stroke="#cccccc" stroke-width="2"/>
+    <rect x="12" y="12" width="40" height="176" rx="8" ry="8" fill="#003399"/>
+    <text x="32" y="110" font-family="Arial,sans-serif" font-size="14" font-weight="bold"
+      text-anchor="middle" fill="#ffffff">${country}</text>
+    <text x="320" y="135" font-family="Arial Black,Arial,sans-serif" font-size="88" font-weight="900"
+      text-anchor="middle" fill="#111111" letter-spacing="6">${chars.toUpperCase()}</text>
+    <text x="320" y="175" font-family="Arial,sans-serif" font-size="20"
+      text-anchor="middle" fill="#555555">${region || ''}</text>
   </svg>`;
 
   return Buffer.from(svg, 'utf-8');
