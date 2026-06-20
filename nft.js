@@ -1,7 +1,6 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, Cell, beginCell } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano, Address, beginCell } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
-// ── TON Client ──
 function getClient() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
   return new TonClient({
@@ -12,57 +11,57 @@ function getClient() {
   });
 }
 
-// ── Получить кошелёк минтера ──
 async function getMinterWallet() {
   const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
-  if (mnemonic.length < 24) throw new Error('TON_MINTER_MNEMONIC не задан или неверный');
+  if (mnemonic.length < 24) throw new Error('TON_MINTER_MNEMONIC not set');
   const keyPair = await mnemonicToPrivateKey(mnemonic);
   const client = getClient();
   const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
   return { wallet, keyPair, client };
 }
 
-// ── Загрузить файл на NFT.Storage ──
-async function uploadToNFTStorage(buffer, mimeType, filename) {
+async function uploadToNFTStorage(buffer, mimeType) {
   const apiKey = process.env.NFT_STORAGE_KEY;
-  if (!apiKey) throw new Error('NFT_STORAGE_KEY не задан');
+  if (!apiKey) throw new Error('NFT_STORAGE_KEY not set');
   const res = await fetch('https://api.nft.storage/upload', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': mimeType,
-      'X-Agent-Did': filename
+      'Content-Type': mimeType
     },
     body: buffer
   });
   const data = await res.json();
-  if (!data.ok) throw new Error('NFT.Storage upload failed: ' + JSON.stringify(data));
+  if (!data.ok) throw new Error('NFT.Storage failed: ' + JSON.stringify(data));
   return `https://ipfs.io/ipfs/${data.value.cid}`;
 }
 
-// ── Сгенерировать картинку номера (SVG → PNG buffer) ──
 async function generatePlateImage(chars, country, region) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200">
-    <rect width="600" height="200" rx="24" ry="24" fill="#ffffff" stroke="#222222" stroke-width="8"/>
-    <rect x="12" y="12" width="576" height="176" rx="16" ry="16" fill="#f8f8f8" stroke="#cccccc" stroke-width="2"/>
-    <rect x="12" y="12" width="40" height="176" rx="8" ry="8" fill="#003399"/>
-    <text x="32" y="110" font-family="Arial,sans-serif" font-size="14" font-weight="bold"
-      text-anchor="middle" fill="#ffffff">${country}</text>
-    <text x="320" y="135" font-family="Arial Black,Arial,sans-serif" font-size="88" font-weight="900"
-      text-anchor="middle" fill="#111111" letter-spacing="6">${chars.toUpperCase()}</text>
-    <text x="320" y="175" font-family="Arial,sans-serif" font-size="20"
-      text-anchor="middle" fill="#555555">${region || ''}</text>
-  </svg>`;
+  // ASCII only — no emoji, no cyrillic in SVG
+  const safeChars = (chars || '').toUpperCase().replace(/[^\x00-\x7F]/g, '?');
+  const safeCountry = (country || '').replace(/[^\x00-\x7F]/g, '?');
+  const safeRegion = (region || '').replace(/[^\x00-\x7F]/g, '');
 
-  return Buffer.from(svg, 'utf-8');
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200">',
+    '<rect width="600" height="200" rx="24" fill="#ffffff" stroke="#222222" stroke-width="8"/>',
+    '<rect x="12" y="12" width="576" height="176" rx="16" fill="#f8f8f8" stroke="#cccccc" stroke-width="2"/>',
+    '<rect x="12" y="12" width="44" height="176" rx="8" fill="#003399"/>',
+    '<text x="34" y="115" font-family="Arial" font-size="13" font-weight="bold" text-anchor="middle" fill="#ffffff">' + safeCountry + '</text>',
+    '<text x="330" y="138" font-family="Arial" font-size="86" font-weight="900" text-anchor="middle" fill="#111111" letter-spacing="5">' + safeChars + '</text>',
+    safeRegion ? '<text x="330" y="178" font-family="Arial" font-size="18" text-anchor="middle" fill="#555555">' + safeRegion + '</text>' : '',
+    '</svg>'
+  ].join('');
+
+  return Buffer.from(svg, 'ascii');
 }
 
-// ── Загрузить metadata на NFT.Storage ──
 async function uploadMetadata(plateKey, chars, country, region, imageUrl) {
-  const name = `${chars.toUpperCase()}${region ? ' | ' + region : ''}`;
+  // All ASCII — no cyrillic
+  const name = 'Plate ' + chars.toUpperCase() + (region ? ' ' + region : '');
   const metadata = {
-    name: `Номерной знак ${name}`,
-    description: `Игровой номерной знак из CarzPlate. Страна: ${country}. Регион: ${region || '—'}.`,
+    name: name,
+    description: 'CarzPlate NFT. Country: ' + country + '. Region: ' + (region || 'none') + '.',
     image: imageUrl,
     attributes: [
       { trait_type: 'Country', value: country },
@@ -71,72 +70,74 @@ async function uploadMetadata(plateKey, chars, country, region, imageUrl) {
     ]
   };
   const buf = Buffer.from(JSON.stringify(metadata), 'utf-8');
-  return await uploadToNFTStorage(buf, 'application/json', `${plateKey}.json`);
+  return await uploadToNFTStorage(buf, 'application/json');
 }
 
-// ── Задеплоить коллекцию (один раз) ──
-async function deployCollection(ownerAddress) {
-  const { wallet, keyPair, client } = await getMinterWallet();
-  const seqno = await wallet.getSeqno();
-  const collectionAddress = wallet.address.toString();
-
-  // Отправляем деплой коллекции через внутреннее сообщение
-  // Для testnet используем упрощённый подход — коллекция = кошелёк минтера
-  console.log('Collection address (minter wallet):', collectionAddress);
-  return collectionAddress;
+// Store string as snake cell chain (supports long strings)
+function storeStringInCell(str) {
+  const bytes = Buffer.from(str, 'utf-8');
+  const chunkSize = 127;
+  const chunks = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    chunks.push(bytes.slice(i, i + chunkSize));
+  }
+  // Build from last chunk backwards
+  let cell = null;
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const b = beginCell();
+    b.storeBuffer(chunks[i]);
+    if (cell) b.storeRef(cell);
+    cell = b.endCell();
+  }
+  return cell || beginCell().endCell();
 }
 
-// ── Минтить NFT ──
 async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
   try {
-    console.log(`Minting NFT for plate ${plateKey} to ${ownerAddress}`);
+    console.log('Minting NFT for plate', plateKey, 'to', ownerAddress);
 
-    const { wallet, keyPair, client } = await getMinterWallet();
+    const { wallet, keyPair } = await getMinterWallet();
 
-    // 1. Генерируем картинку
+    // 1. Generate image
     const imgBuffer = await generatePlateImage(chars, country, region);
-
-    // 2. Загружаем картинку
-    const imageUrl = await uploadToNFTStorage(imgBuffer, 'image/svg+xml', `${plateKey}.svg`);
+    const imageUrl = await uploadToNFTStorage(imgBuffer, 'image/svg+xml');
     console.log('Image uploaded:', imageUrl);
 
-    // 3. Загружаем metadata
+    // 2. Upload metadata
     const metadataUrl = await uploadMetadata(plateKey, chars, country, region, imageUrl);
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 4. Формируем NFT данные по стандарту TEP-62
-    const nftData = beginCell()
-      .storeAddress(Address.parse(ownerAddress))
-      .storeRef(
-        beginCell()
-          .storeUint(0x01, 8) // off-chain content
-          .storeStringTail(metadataUrl)
-          .endCell()
-      )
+    // 3. Build NFT content cell (TEP-64 off-chain)
+    const contentCell = beginCell()
+      .storeUint(0x01, 8) // off-chain marker
+      .storeRef(storeStringInCell(metadataUrl))
       .endCell();
 
-    // 5. Отправляем транзакцию — деплоим NFT контракт
+    // 4. Build NFT item init (TEP-62 simplified)
+    const nftBody = beginCell()
+      .storeUint(0, 32)  // op = 0 (simple transfer)
+      .storeStringTail('CarzPlate NFT ' + chars.toUpperCase())
+      .endCell();
+
+    // 5. Send transaction
     const seqno = await wallet.getSeqno();
     await wallet.sendTransfer({
       seqno,
       secretKey: keyPair.secretKey,
       messages: [
         internal({
-          to: wallet.address, // в testnet минтим через кошелёк-минтер
+          to: wallet.address,
           value: toNano('0.05'),
-          body: nftData,
+          body: nftBody,
           bounce: false
         })
       ]
     });
 
-    // 6. Ждём подтверждения
-    await new Promise(r => setTimeout(r, 10000));
+    await new Promise(r => setTimeout(r, 8000));
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-    const explorerUrl = isTestnet
-      ? `https://testnet.tonscan.org/address/${wallet.address.toString()}`
-      : `https://tonscan.org/address/${wallet.address.toString()}`;
+    const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org') + '/address/' + wallet.address.toString();
 
     return {
       ok: true,
@@ -146,9 +147,9 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
       explorer_url: explorerUrl
     };
   } catch (e) {
-    console.error('Mint error:', e);
+    console.error('Mint error:', e.message);
     return { ok: false, error: e.message };
   }
 }
 
-module.exports = { mintNFT, deployCollection };
+module.exports = { mintNFT };
