@@ -23,7 +23,7 @@ const userSockets = {};
 // Синхронизация игрока
 app.post('/player/sync', async (req, res) => {
   try {
-    const { telegram_id, username, coins, total_spins, total_coins_earned } = req.body;
+    const { telegram_id, username, coins, total_spins, total_coins_earned, ton_wallet_address } = req.body;
     if (!telegram_id) return res.json({ ok: false, error: 'no id' });
 
     const existing = await pool.query(
@@ -33,9 +33,9 @@ app.post('/player/sync', async (req, res) => {
     if (existing.rows.length === 0) {
       // Новый игрок
       await pool.query(
-        `INSERT INTO players (telegram_id, username, coins, total_spins, total_coins_earned)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [String(telegram_id), username || 'player', coins || 0, total_spins || 0, total_coins_earned || 0]
+        `INSERT INTO players (telegram_id, username, coins, total_spins, total_coins_earned, ton_wallet_address)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [String(telegram_id), username || 'player', coins || 0, total_spins || 0, total_coins_earned || 0, ton_wallet_address || null]
       );
       return res.json({ ok: true, coins: coins || 0, isNew: true });
     }
@@ -46,15 +46,17 @@ app.post('/player/sync', async (req, res) => {
     const localCoins = Number(coins) || 0;
     const finalCoins = serverCoins >= localCoins ? serverCoins : localCoins;
 
+    const newWallet = ton_wallet_address !== undefined ? ton_wallet_address : player.ton_wallet_address;
     await pool.query(
-      `UPDATE players SET username=$2, coins=$3, total_spins=$4, total_coins_earned=$5, updated_at=NOW()
+      `UPDATE players SET username=$2, coins=$3, total_spins=$4, total_coins_earned=$5, ton_wallet_address=$6, updated_at=NOW()
        WHERE telegram_id=$1`,
       [String(telegram_id), username || player.username, finalCoins,
        Math.max(total_spins || 0, player.total_spins || 0),
-       Math.max(total_coins_earned || 0, player.total_coins_earned || 0)]
+       Math.max(total_coins_earned || 0, player.total_coins_earned || 0),
+       newWallet || null]
     );
 
-    res.json({ ok: true, coins: finalCoins });
+    res.json({ ok: true, coins: finalCoins, ton_wallet_address: newWallet || null });
   } catch (e) {
     console.error(e);
     res.json({ ok: false, error: e.message });
@@ -64,9 +66,9 @@ app.post('/player/sync', async (req, res) => {
 // Получить монеты игрока
 app.get('/player/coins/:id', async (req, res) => {
   try {
-    const r = await pool.query('SELECT coins FROM players WHERE telegram_id=$1', [req.params.id]);
+    const r = await pool.query('SELECT coins, ton_wallet_address FROM players WHERE telegram_id=$1', [req.params.id]);
     if (!r.rows.length) return res.json({ ok: false });
-    res.json({ ok: true, coins: Number(r.rows[0].coins) });
+    res.json({ ok: true, coins: Number(r.rows[0].coins), ton_wallet_address: r.rows[0].ton_wallet_address || null });
   } catch (e) {
     res.json({ ok: false, error: e.message });
   }
