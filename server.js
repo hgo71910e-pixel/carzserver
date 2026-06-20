@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { pool, initDB } = require('./db');
+const { mintNFT } = require('./nft');
 
 const app = express();
 const server = http.createServer(app);
@@ -452,6 +453,88 @@ app.post('/admin/remove_plate', async (req, res) => {
 // ── Трекинг открытий ──
 app.post('/track', async (req, res) => {
   res.json({ ok: true });
+});
+
+
+// ═══════════════════════════════════════
+//  NFT
+// ═══════════════════════════════════════
+
+// Активировать номер как NFT (тестовый минт)
+app.post('/nft/mint', async (req, res) => {
+  try {
+    const { telegram_id, plate_key, wallet_address } = req.body;
+    if (!telegram_id || !plate_key || !wallet_address) {
+      return res.json({ ok: false, error: 'missing fields' });
+    }
+
+    // Проверяем что номер принадлежит игроку
+    const plate = await pool.query(
+      'SELECT * FROM plates WHERE plate_key=$1 AND telegram_id=$2',
+      [plate_key, String(telegram_id)]
+    );
+    if (!plate.rows.length) return res.json({ ok: false, error: 'plate not found' });
+
+    // Проверяем что не был уже заминчен
+    const existing = await pool.query(
+      'SELECT * FROM nfts WHERE plate_key=$1',
+      [plate_key]
+    );
+    if (existing.rows.length) {
+      return res.json({ ok: false, error: 'already minted', nft: existing.rows[0] });
+    }
+
+    const p = plate.rows[0];
+
+    // Минтим NFT
+    const result = await mintNFT({
+      plateKey: plate_key,
+      chars: p.chars,
+      country: p.country,
+      region: p.region,
+      ownerAddress: wallet_address
+    });
+
+    if (!result.ok) return res.json({ ok: false, error: result.error });
+
+    // Сохраняем в БД
+    await pool.query(
+      `INSERT INTO nfts (plate_key, telegram_id, wallet_address, nft_address, metadata_url, image_url, network)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (plate_key) DO UPDATE SET nft_address=$4, metadata_url=$5, image_url=$6`,
+      [plate_key, String(telegram_id), wallet_address,
+       result.nft_address, result.metadata_url, result.image_url,
+       process.env.TON_NETWORK || 'testnet']
+    );
+
+    // Помечаем номер как активированный
+    await pool.query(
+      'UPDATE plates SET nft_activated=true, nft_address=$1 WHERE plate_key=$2',
+      [result.nft_address, plate_key]
+    );
+
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    console.error(e);
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Получить NFT игрока
+app.get('/nft/list/:telegram_id', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT n.*, p.chars, p.country, p.region
+       FROM nfts n
+       LEFT JOIN plates p ON p.plate_key = n.plate_key
+       WHERE n.telegram_id=$1
+       ORDER BY n.minted_at DESC`,
+      [req.params.telegram_id]
+    );
+    res.json({ ok: true, nfts: r.rows });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════

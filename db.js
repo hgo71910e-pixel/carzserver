@@ -13,6 +13,7 @@ async function initDB() {
       coins INTEGER DEFAULT 0,
       total_spins INTEGER DEFAULT 0,
       total_coins_earned INTEGER DEFAULT 0,
+      ton_wallet_address TEXT,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW()
     );
@@ -23,7 +24,19 @@ async function initDB() {
       region TEXT,
       chars TEXT,
       upgrades TEXT,
+      nft_activated BOOLEAN DEFAULT FALSE,
+      nft_address TEXT,
       created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS nfts (
+      plate_key TEXT PRIMARY KEY,
+      telegram_id TEXT,
+      wallet_address TEXT,
+      nft_address TEXT,
+      metadata_url TEXT,
+      image_url TEXT,
+      network TEXT DEFAULT 'testnet',
+      minted_at TIMESTAMP DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS market (
       plate_key TEXT PRIMARY KEY,
@@ -48,6 +61,13 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
+
+  // Добавляем колонки если их нет (для существующих БД)
+  await pool.query(`
+    ALTER TABLE plates ADD COLUMN IF NOT EXISTS nft_activated BOOLEAN DEFAULT FALSE;
+    ALTER TABLE plates ADD COLUMN IF NOT EXISTS nft_address TEXT;
+    ALTER TABLE players ADD COLUMN IF NOT EXISTS ton_wallet_address TEXT;
+  `).catch(() => {});
 }
 
 module.exports = { pool, initDB };
