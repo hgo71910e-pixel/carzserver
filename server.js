@@ -455,14 +455,16 @@ app.post('/track', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Задеплоить коллекцию (один раз) ──
-app.post('/nft/deploy-collection', async (req, res) => {
+// ── Задеплоить коллекцию (один раз, GET чтобы открыть в браузере) ──
+app.get('/nft/deploy-collection', async (req, res) => {
   try {
     const { deployCollection } = require('./nft-collection');
     const collectionUrl = 'https://ipfs.io/ipfs/bafkreihaclz47kegqv5dbzx3uef6and3bkbx5g7ioefv4uqptxpam';
+    console.log('Deploying collection...');
     const address = await deployCollection(collectionUrl);
-    res.json({ ok: true, address, message: 'Set TON_COLLECTION_ADDRESS=' + address });
+    res.json({ ok: true, address, next_step: 'Add to Railway: TON_COLLECTION_ADDRESS=' + address });
   } catch(e) {
+    console.error('Deploy error:', e.message);
     res.json({ ok: false, error: e.message });
   }
 });
