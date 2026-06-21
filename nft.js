@@ -151,37 +151,13 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 3. Send TON transaction
-    let seqno;
-    try {
-      seqno = await wallet.getSeqno();
-    } catch(e) {
-      // Wallet not deployed yet — deploy first
-      seqno = 0;
-    }
-
-    await wallet.sendTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [
-        internal({
-          to: wallet.address,
-          value: toNano('0.02'),
-          body: 'CarzPlate ' + (chars || '').toUpperCase(),
-          bounce: false
-        })
-      ]
-    });
-
-    await new Promise(r => setTimeout(r, 8000));
-
-    const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-    const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
-      + '/address/' + wallet.address.toString();
+    // Тестовый режим — картинка и metadata на IPFS, TON транзакция пока пропущена
+    const fakeNftAddress = 'test_' + plateKey;
+    const explorerUrl = metadataUrl;
 
     return {
       ok: true,
-      nft_address: wallet.address.toString(),
+      nft_address: fakeNftAddress,
       metadata_url: metadataUrl,
       image_url: imageUrl,
       explorer_url: explorerUrl
