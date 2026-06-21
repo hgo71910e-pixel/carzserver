@@ -455,6 +455,25 @@ app.post('/track', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Адрес кошелька минтера ──
+app.get('/nft/wallet', async (req, res) => {
+  try {
+    const { mintNFT } = require('./nft');
+    const { mnemonicToPrivateKey } = require('@ton/crypto');
+    const { WalletContractV4, TonClient } = require('@ton/ton');
+    const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
+    const keyPair = await mnemonicToPrivateKey(mnemonic);
+    const client = new TonClient({ endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC' });
+    const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
+    const address = wallet.address.toString();
+    let balance = '0';
+    try { balance = (await client.getBalance(wallet.address)).toString(); } catch(e) {}
+    res.json({ ok: true, address, balance });
+  } catch(e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 
 // ═══════════════════════════════════════
 //  NFT
