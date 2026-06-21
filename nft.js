@@ -131,6 +131,7 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     console.log('Minting NFT for plate', plateKey);
 
     const { wallet, keyPair } = await getMinterWallet();
+    console.log('Minter wallet:', wallet.address.toString(), 'Owner:', ownerAddress);
 
     // 1. Generate and upload image
     const imgBuffer = generatePlateImage(chars, country, region);
@@ -151,13 +152,36 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // Тестовый режим — картинка и metadata на IPFS, TON транзакция пока пропущена
-    const fakeNftAddress = 'test_' + plateKey;
-    const explorerUrl = metadataUrl;
+    // 3. Отправляем TON транзакцию
+    let seqno;
+    try {
+      seqno = await wallet.getSeqno();
+    } catch(e) {
+      seqno = 0;
+    }
+
+    await wallet.sendTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [
+        internal({
+          to: ownerAddress,
+          value: toNano('0.01'),
+          body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
+          bounce: false
+        })
+      ]
+    });
+
+    await new Promise(r => setTimeout(r, 8000));
+
+    const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
+    const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
+      + '/address/' + wallet.address.toString();
 
     return {
       ok: true,
-      nft_address: fakeNftAddress,
+      nft_address: wallet.address.toString(),
       metadata_url: metadataUrl,
       image_url: imageUrl,
       explorer_url: explorerUrl
