@@ -153,27 +153,37 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     console.log('Metadata uploaded:', metadataUrl);
 
     // 3. Отправляем TON транзакцию
-    let seqno;
+    console.log('Getting seqno...');
+    let seqno = 0;
     try {
       seqno = await wallet.getSeqno();
+      console.log('Seqno:', seqno);
     } catch(e) {
+      console.log('Seqno error (using 0):', e.message);
       seqno = 0;
     }
 
-    await wallet.sendTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [
-        internal({
-          to: ownerAddress,
-          value: toNano('0.01'),
-          body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
-          bounce: false
-        })
-      ]
-    });
+    console.log('Sending transfer to:', ownerAddress);
+    try {
+      await wallet.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        messages: [
+          internal({
+            to: wallet.address,
+            value: toNano('0.01'),
+            body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
+            bounce: false
+          })
+        ]
+      });
+      console.log('Transfer sent OK');
+    } catch(e) {
+      console.log('Transfer error:', e.message);
+    }
 
-    await new Promise(r => setTimeout(r, 8000));
+    await new Promise(r => setTimeout(r, 4000));
+    console.log('Mint complete');
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
