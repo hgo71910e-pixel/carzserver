@@ -1,5 +1,7 @@
 const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
+const FormData = require('form-data');
+const https = require('https');
 
 function getClient() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
@@ -20,26 +22,54 @@ async function getMinterWallet() {
   return { wallet, keyPair, client };
 }
 
-async function uploadToPinata(buffer, mimeType, filename) {
+function httpRequest(url, options, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { resolve({ error: data }); }
+      });
+    });
+    req.on('error', reject);
+    if (body) {
+      if (body.pipe) body.pipe(req);
+      else { req.write(body); req.end(); }
+    } else req.end();
+  });
+}
+
+async function uploadToPinata(buffer, filename, mimeType) {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error('PINATA_JWT not set');
 
-  const FormData = (await import('form-data')).default;
   const form = new FormData();
   form.append('file', buffer, { filename, contentType: mimeType });
-  form.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
   form.append('pinataMetadata', JSON.stringify({ name: filename }));
+  form.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
 
-  const res = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${jwt}`,
-      ...form.getHeaders()
-    },
-    body: form
+  const headers = {
+    ...form.getHeaders(),
+    'Authorization': `Bearer ${jwt}`
+  };
+
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.pinata.cloud',
+      path: '/pinning/pinFileToIPFS',
+      method: 'POST',
+      headers
+    }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({ error: d }); } });
+    });
+    req.on('error', reject);
+    form.pipe(req);
   });
-  const data = await res.json();
-  if (!data.IpfsHash) throw new Error('Pinata failed: ' + JSON.stringify(data));
+
+  if (!data.IpfsHash) throw new Error('Pinata file failed: ' + JSON.stringify(data));
   return `https://ipfs.io/ipfs/${data.IpfsHash}`;
 }
 
@@ -47,19 +77,32 @@ async function uploadJsonToPinata(obj, filename) {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error('PINATA_JWT not set');
 
-  const res = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${jwt}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      pinataContent: obj,
-      pinataMetadata: { name: filename },
-      pinataOptions: { cidVersion: 1 }
-    })
+  const body = JSON.stringify({
+    pinataContent: obj,
+    pinataMetadata: { name: filename },
+    pinataOptions: { cidVersion: 1 }
   });
-  const data = await res.json();
+
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.pinata.cloud',
+      path: '/pinning/pinJSONToIPFS',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (res) => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({ error: d }); } });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+
   if (!data.IpfsHash) throw new Error('Pinata JSON failed: ' + JSON.stringify(data));
   return `https://ipfs.io/ipfs/${data.IpfsHash}`;
 }
@@ -85,19 +128,18 @@ function generatePlateImage(chars, country, region) {
 
 async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
   try {
-    console.log('Minting NFT for plate', plateKey, 'to', ownerAddress);
+    console.log('Minting NFT for plate', plateKey);
 
     const { wallet, keyPair } = await getMinterWallet();
 
     // 1. Generate and upload image
     const imgBuffer = generatePlateImage(chars, country, region);
-    const imageUrl = await uploadToPinata(imgBuffer, 'image/svg+xml', plateKey + '.svg');
+    const imageUrl = await uploadToPinata(imgBuffer, plateKey + '.svg', 'image/svg+xml');
     console.log('Image uploaded:', imageUrl);
 
     // 2. Upload metadata
-    const name = 'Plate ' + (chars || '').toUpperCase() + (region ? ' ' + region : '');
     const metadata = {
-      name: name,
+      name: 'Plate ' + (chars || '').toUpperCase() + (region ? ' ' + region : ''),
       description: 'CarzPlate NFT. Country: ' + (country || '') + '. Region: ' + (region || 'none') + '.',
       image: imageUrl,
       attributes: [
@@ -118,7 +160,7 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
         internal({
           to: wallet.address,
           value: toNano('0.02'),
-          body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
+          body: 'CarzPlate ' + (chars || '').toUpperCase(),
           bounce: false
         })
       ]
