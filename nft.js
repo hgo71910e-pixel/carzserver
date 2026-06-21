@@ -1,7 +1,8 @@
-const { TonClient, WalletContractV4, internal, toNano } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 const FormData = require('form-data');
 const https = require('https');
+const { getNftItemCode } = require('./nft-collection');
 
 function getClient() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
@@ -22,44 +23,19 @@ async function getMinterWallet() {
   return { wallet, keyPair, client };
 }
 
-function httpRequest(url, options, body) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { resolve({ error: data }); }
-      });
-    });
-    req.on('error', reject);
-    if (body) {
-      if (body.pipe) body.pipe(req);
-      else { req.write(body); req.end(); }
-    } else req.end();
-  });
-}
-
 async function uploadToPinata(buffer, filename, mimeType) {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error('PINATA_JWT not set');
-
   const form = new FormData();
   form.append('file', buffer, { filename, contentType: mimeType });
   form.append('pinataMetadata', JSON.stringify({ name: filename }));
   form.append('pinataOptions', JSON.stringify({ cidVersion: 1 }));
-
-  const headers = {
-    ...form.getHeaders(),
-    'Authorization': `Bearer ${jwt}`
-  };
-
   const data = await new Promise((resolve, reject) => {
     const req = https.request({
       hostname: 'api.pinata.cloud',
       path: '/pinning/pinFileToIPFS',
       method: 'POST',
-      headers
+      headers: { ...form.getHeaders(), 'Authorization': `Bearer ${jwt}` }
     }, (res) => {
       let d = '';
       res.on('data', c => d += c);
@@ -68,7 +44,6 @@ async function uploadToPinata(buffer, filename, mimeType) {
     req.on('error', reject);
     form.pipe(req);
   });
-
   if (!data.IpfsHash) throw new Error('Pinata file failed: ' + JSON.stringify(data));
   return `https://ipfs.io/ipfs/${data.IpfsHash}`;
 }
@@ -76,13 +51,11 @@ async function uploadToPinata(buffer, filename, mimeType) {
 async function uploadJsonToPinata(obj, filename) {
   const jwt = process.env.PINATA_JWT;
   if (!jwt) throw new Error('PINATA_JWT not set');
-
   const body = JSON.stringify({
     pinataContent: obj,
     pinataMetadata: { name: filename },
     pinataOptions: { cidVersion: 1 }
   });
-
   const data = await new Promise((resolve, reject) => {
     const req = https.request({
       hostname: 'api.pinata.cloud',
@@ -102,7 +75,6 @@ async function uploadJsonToPinata(obj, filename) {
     req.write(body);
     req.end();
   });
-
   if (!data.IpfsHash) throw new Error('Pinata JSON failed: ' + JSON.stringify(data));
   return `https://ipfs.io/ipfs/${data.IpfsHash}`;
 }
@@ -111,7 +83,6 @@ function generatePlateImage(chars, country, region) {
   const safeChars = (chars || '').toUpperCase().replace(/[^\x20-\x7E]/g, '');
   const safeCountry = (country || '').replace(/[^\x20-\x7E]/g, '');
   const safeRegion = (region || '').replace(/[^\x20-\x7E]/g, '');
-
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200">',
     '<rect width="600" height="200" rx="24" fill="#ffffff" stroke="#222222" stroke-width="8"/>',
@@ -122,16 +93,32 @@ function generatePlateImage(chars, country, region) {
     safeRegion ? '<text x="330" y="178" font-family="Arial" font-size="18" text-anchor="middle" fill="#555555">' + safeRegion + '</text>' : '',
     '</svg>'
   ].join('');
-
   return Buffer.from(svg, 'utf-8');
 }
 
-async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
-  try {
-    console.log('Minting NFT for plate', plateKey);
+// Build NFT item init data (TEP-62)
+function buildNftItemData(index, collectionAddress, ownerAddress, contentUrl) {
+  return beginCell()
+    .storeUint(index, 64)
+    .storeAddress(Address.parse(collectionAddress))
+    .storeAddress(Address.parse(ownerAddress))
+    .storeRef(
+      beginCell()
+        .storeUint(1, 8) // off-chain
+        .storeStringTail(contentUrl)
+        .endCell()
+    )
+    .endCell();
+}
 
-    const { wallet, keyPair } = await getMinterWallet();
-    console.log('Minter wallet:', wallet.address.toString(), 'Owner:', ownerAddress);
+async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftIndex }) {
+  try {
+    const collectionAddress = process.env.TON_COLLECTION_ADDRESS;
+    if (!collectionAddress) throw new Error('TON_COLLECTION_ADDRESS not set');
+
+    console.log('Minting NFT for plate', plateKey, 'index', nftIndex);
+
+    const { wallet, keyPair, client } = await getMinterWallet();
 
     // 1. Generate and upload image
     const imgBuffer = generatePlateImage(chars, country, region);
@@ -152,46 +139,48 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 3. Отправляем TON транзакцию
-    console.log('Getting seqno...');
-    let seqno = 0;
-    try {
-      seqno = await wallet.getSeqno();
-      console.log('Seqno:', seqno);
-    } catch(e) {
-      console.log('Seqno error (using 0):', e.message);
-      seqno = 0;
-    }
+    // 3. Build NFT item address
+    const nftItemCode = getNftItemCode();
+    const nftData = buildNftItemData(nftIndex, collectionAddress, ownerAddress, metadataUrl);
+    const nftAddr = contractAddress(0, { code: nftItemCode, data: nftData });
+    console.log('NFT address:', nftAddr.toString());
 
-    console.log('Sending transfer to:', ownerAddress);
-    try {
-      await wallet.sendTransfer({
-        seqno,
-        secretKey: keyPair.secretKey,
-        messages: [
-          internal({
-            to: wallet.address,
-            value: toNano('0.01'),
-            body: 'CarzPlate NFT ' + (chars || '').toUpperCase(),
-            bounce: false
-          })
-        ]
-      });
-      console.log('Transfer sent OK');
-    } catch(e) {
-      console.log('Transfer error:', e.message);
-    }
+    // 4. Mint via collection contract (op = 1)
+    const mintBody = beginCell()
+      .storeUint(1, 32) // op: deploy new nft
+      .storeUint(0, 64) // query_id
+      .storeUint(nftIndex, 64) // item_index
+      .storeCoins(toNano('0.05')) // amount for nft
+      .storeRef(nftData)
+      .endCell();
 
-    await new Promise(r => setTimeout(r, 4000));
-    console.log('Mint complete');
+    const seqno = await wallet.getSeqno();
+    console.log('Seqno:', seqno);
+
+    await wallet.sendTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [
+        internal({
+          to: Address.parse(collectionAddress),
+          value: toNano('0.08'),
+          body: mintBody,
+          bounce: true
+        })
+      ]
+    });
+
+    console.log('Mint TX sent, waiting...');
+    await new Promise(r => setTimeout(r, 8000));
+    console.log('Mint complete. NFT:', nftAddr.toString());
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
-      + '/address/' + wallet.address.toString();
+      + '/address/' + nftAddr.toString();
 
     return {
       ok: true,
-      nft_address: wallet.address.toString(),
+      nft_address: nftAddr.toString(),
       metadata_url: metadataUrl,
       image_url: imageUrl,
       explorer_url: explorerUrl

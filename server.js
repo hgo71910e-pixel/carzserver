@@ -455,6 +455,18 @@ app.post('/track', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Задеплоить коллекцию (один раз) ──
+app.post('/nft/deploy-collection', async (req, res) => {
+  try {
+    const { deployCollection } = require('./nft-collection');
+    const collectionUrl = 'https://ipfs.io/ipfs/bafkreihaclz47kegqv5dbzx3uef6and3bkbx5g7ioefv4uqptxpam';
+    const address = await deployCollection(collectionUrl);
+    res.json({ ok: true, address, message: 'Set TON_COLLECTION_ADDRESS=' + address });
+  } catch(e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
 // ── Адрес кошелька минтера ──
 app.get('/nft/wallet', async (req, res) => {
   try {
@@ -505,13 +517,18 @@ app.post('/nft/mint', async (req, res) => {
 
     const p = plate.rows[0];
 
+    // Получаем следующий индекс NFT
+    const idxRow = await pool.query('SELECT COUNT(*) FROM nfts');
+    const nftIndex = parseInt(idxRow.rows[0].count) || 0;
+
     // Минтим NFT
     const result = await mintNFT({
       plateKey: plate_key,
       chars: p.chars,
       country: p.country,
       region: p.region,
-      ownerAddress: wallet_address
+      ownerAddress: wallet_address,
+      nftIndex
     });
 
     if (!result.ok) return res.json({ ok: false, error: result.error });
