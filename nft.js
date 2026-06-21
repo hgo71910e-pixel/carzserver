@@ -152,7 +152,14 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
     console.log('Metadata uploaded:', metadataUrl);
 
     // 3. Send TON transaction
-    const seqno = await wallet.getSeqno();
+    let seqno;
+    try {
+      seqno = await wallet.getSeqno();
+    } catch(e) {
+      // Wallet not deployed yet — deploy first
+      seqno = 0;
+    }
+
     await wallet.sendTransfer({
       seqno,
       secretKey: keyPair.secretKey,
@@ -166,7 +173,7 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress }) {
       ]
     });
 
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, 8000));
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
