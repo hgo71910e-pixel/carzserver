@@ -1,4 +1,4 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress, Cell } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 function getClient(isTestnet) {
@@ -22,55 +22,41 @@ async function deployCollection(collectionContentUrl) {
   const client = getClient(isTestnet);
   const { wallet, keyPair } = await getMinterWallet(client);
   const ownerAddress = wallet.address.toString();
-
   console.log('Owner:', ownerAddress);
 
-  // Use @ton-community/nft-sdk for verified contract code
+  // Load verified NFT contracts from npm package
   let NftCollection;
   try {
-    NftCollection = require('@ton-community/nft-sdk').NftCollection;
+    // Try @ton-community/nft-sdk first
+    const sdk = require('@ton-community/nft-sdk');
+    NftCollection = sdk.NftCollection || sdk.default?.NftCollection;
   } catch(e) {
-    throw new Error('Please install @ton-community/nft-sdk: ' + e.message);
+    console.log('nft-sdk not available:', e.message);
   }
 
-  const collection = NftCollection.create({
-    ownerAddress: Address.parse(ownerAddress),
-    royaltyPercent: 0,
-    royaltyAddress: Address.parse(ownerAddress),
-    nextItemIndex: 0,
-    collectionContentUrl,
-    commonContentUrl: ''
-  });
+  if (NftCollection) {
+    const collection = new NftCollection({
+      ownerAddress: Address.parse(ownerAddress),
+      royaltyPercent: 0,
+      royaltyAddress: Address.parse(ownerAddress),
+      nextItemIndex: 0,
+      collectionContentUrl,
+      commonContentUrl: ''
+    });
+    const stateInit = collection.stateInit;
+    const collectionAddr = contractAddress(0, stateInit);
+    console.log('Collection address:', collectionAddr.toString());
+    const seqno = await wallet.getSeqno();
+    await wallet.sendTransfer({
+      seqno,
+      secretKey: keyPair.secretKey,
+      messages: [internal({ to: collectionAddr, value: toNano('0.1'), init: stateInit, body: beginCell().endCell(), bounce: false })]
+    });
+    await new Promise(r => setTimeout(r, 10000));
+    return collectionAddr.toString();
+  }
 
-  const collectionAddr = contractAddress(0, await collection.getStateInit());
-  console.log('Collection address:', collectionAddr.toString());
-
-  const stateInit = await collection.getStateInit();
-  const seqno = await wallet.getSeqno();
-
-  await wallet.sendTransfer({
-    seqno,
-    secretKey: keyPair.secretKey,
-    messages: [
-      internal({
-        to: collectionAddr,
-        value: toNano('0.1'),
-        init: stateInit,
-        body: beginCell().endCell(),
-        bounce: false
-      })
-    ]
-  });
-
-  console.log('Deploy sent, waiting 10s...');
-  await new Promise(r => setTimeout(r, 10000));
-  console.log('Done!');
-  return collectionAddr.toString();
+  throw new Error('@ton-community/nft-sdk not installed. Run: npm install @ton-community/nft-sdk');
 }
 
-async function getNftItemCode() {
-  const { NftItem } = require('@ton-community/nft-sdk');
-  return NftItem.getCode();
-}
-
-module.exports = { deployCollection, getNftItemCode };
+module.exports = { deployCollection };

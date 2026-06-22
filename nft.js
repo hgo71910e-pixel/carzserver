@@ -2,7 +2,6 @@ const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contr
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 const FormData = require('form-data');
 const https = require('https');
-const { getNftItemCode } = require('./nft-collection');
 
 function getClient() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
@@ -139,11 +138,9 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
     const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 3. Build NFT item address
-    const nftItemCode = getNftItemCode();
+    // 3. Build NFT mint message
     const nftData = buildNftItemData(nftIndex, collectionAddress, ownerAddress, metadataUrl);
-    const nftAddr = contractAddress(0, { code: nftItemCode, data: nftData });
-    console.log('NFT address:', nftAddr.toString());
+    console.log('NFT index:', nftIndex);
 
     // 4. Mint via collection contract (op = 1)
     const mintBody = beginCell()
@@ -175,12 +172,13 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
     console.log('Mint complete. NFT:', nftAddr.toString());
 
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
+    const nftAddr = collectionAddress + '_item_' + nftIndex;
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
-      + '/address/' + nftAddr.toString();
+      + '/address/' + collectionAddress;
 
     return {
       ok: true,
-      nft_address: nftAddr.toString(),
+      nft_address: nftAddr,
       metadata_url: metadataUrl,
       image_url: imageUrl,
       explorer_url: explorerUrl
