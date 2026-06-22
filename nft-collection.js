@@ -1,4 +1,4 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, Cell, contractAddress } = require('@ton/ton');
+const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 function getClient(isTestnet) {
@@ -17,16 +17,16 @@ async function getMinterWallet(client) {
   return { wallet, keyPair };
 }
 
-// NFT Item code - standard TEP-62 from ton-core examples
-function getNftItemCode() {
-  // Standard nft-item.fc compiled code
-  return Cell.fromBase64('te6cckECDQEAAdAAART/APSkE/S88sgLAgEBAgECAgED8BAB/uMNCwHAA4IQ1TJ223CAGMjLBVAEzxZQBPoCE8tqyMsfAc8WyfkAHKEgwACTIMIAmI4q0x8BghDVMnbbugHTP1lsIjD4J28Q+EFvJBNfA6D4J28Q+EFvJBAjoL7y4IIBpI6CEA+KfqVSELyUMDQ1WYIFBQIDBAIAAP4wghBfzD0UIYAYyMsFUAbPFlAE+gIVy2oSyx/LP8sfAfoCyXH7AAIBIAYHAgEgCAkAmzL0pCOlIIIImJaAoBO+hbY4SIIQBIoEQPhCghBfzD0UIYAYyMsFUAbPFlAE+gIVy2oSyx/LP8sfAfoCyXH7ADAxMiB/jhZUcDSAZKkEIW6zINdJwSCRcOKRMOKRMeIBAgEgCgsCAUgMDQAZvl8PaiaGoA/DHQAJW2zfaiaGoA/DHQANtgW2eKoA/DHQAB+zu2i7fvoAUASBS6k=');
+// Fetch compiled contract code from TON testnet
+async function fetchContractCode(address) {
+  const client = getClient(true);
+  const state = await client.getContractState(Address.parse(address));
+  return state.code;
 }
 
-// NFT Collection code - standard TEP-62
-function getCollectionCode() {
-  return Cell.fromBase64('te6cckECFAEAAh8AART/APSkE/S88sgLAgEBAgECAgED8BAB/uMNCwHAA4IQ1TJ223CAGMjLBVAEzxZQBPoCE8tqyMsfAc8WyfkAHKEgwACTIMIAmI4q0x8BghDVMnbbugHTP1lsIjD4J28Q+EFvJBNfA6D4J28Q+EFvJBAjoL7y4IIBpI6CEA+KfqVSELyUMDQ1WYIDBQQCAQIDBAIAAP4wghBfzD0UIYAYyMsFUAbPFlAE+gIVy2oSyx/LP8sfAfoCyXH7AAIBIAYHAgFICAkAmzL0pCOlIIIImJaAoBO+hbY4SIIQBIoEQPhCghBfzD0UIYAYyMsFUAbPFlAE+gIVy2oSyx/LP8sfAfoCyXH7ADAxMiB/jhZUcDSAZKkEIW6zINdJwSCRcOKRMOKRMeIBAgEgCgsCAUgMDQAZvl8PaiaGoA/DHQAJW2zfaiaGoA/DHQANtgW2eKoA/DHQAB+zu2i7fvoAUASBS6k=');
-}
+// Known deployed NFT collection on testnet — we copy its code
+const KNOWN_NFT_COLLECTION = 'EQD7bbIBUPQFYYBEdxvDHNoJiMTvKANyHiPl3VCr7K2K_aPY';
+const KNOWN_NFT_ITEM = 'EQBCkgADUMkG_oMfOq_byJarFHK6FLCJm3HFa6cSFGrjkzGW';
 
 async function deployCollection(collectionContentUrl) {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
@@ -34,39 +34,43 @@ async function deployCollection(collectionContentUrl) {
   const { wallet, keyPair } = await getMinterWallet(client);
   const ownerAddress = wallet.address.toString();
 
-  console.log('Owner address:', ownerAddress);
+  console.log('Owner:', ownerAddress);
+  console.log('Fetching NFT contracts from testnet...');
 
-  // Collection content cell
+  // Get NFT item code from known working contract
+  let nftItemCode, collectionCode;
+  try {
+    const itemState = await client.getContractState(Address.parse(KNOWN_NFT_ITEM));
+    nftItemCode = itemState.code;
+    const colState = await client.getContractState(Address.parse(KNOWN_NFT_COLLECTION));
+    collectionCode = colState.code;
+    console.log('Contracts fetched OK');
+  } catch(e) {
+    throw new Error('Could not fetch contract code: ' + e.message);
+  }
+
   const contentCell = beginCell()
-    .storeUint(1, 8) // off-chain
+    .storeUint(1, 8)
     .storeStringTail(collectionContentUrl)
     .endCell();
 
-  // NFT item code
-  const nftItemCode = getNftItemCode();
-
-  // Royalty params (0%)
   const royaltyCell = beginCell()
-    .storeUint(0, 16) // numerator
-    .storeUint(100, 16) // denominator
+    .storeUint(0, 16)
+    .storeUint(100, 16)
     .storeAddress(Address.parse(ownerAddress))
     .endCell();
 
-  // Collection data
   const collectionData = beginCell()
     .storeAddress(Address.parse(ownerAddress))
-    .storeUint(0, 64) // next_item_index
+    .storeUint(0, 64)
     .storeRef(contentCell)
     .storeRef(nftItemCode)
     .storeRef(royaltyCell)
     .endCell();
 
-  const collectionCode = getCollectionCode();
-
   const stateInit = { code: collectionCode, data: collectionData };
   const collectionAddr = contractAddress(0, stateInit);
-
-  console.log('Collection address:', collectionAddr.toString());
+  console.log('New collection address:', collectionAddr.toString());
 
   const seqno = await wallet.getSeqno();
   await wallet.sendTransfer({
@@ -83,11 +87,18 @@ async function deployCollection(collectionContentUrl) {
     ]
   });
 
-  console.log('Deploy TX sent, waiting 8s...');
-  await new Promise(r => setTimeout(r, 8000));
-  console.log('Collection deployed!');
+  console.log('Deploy sent, waiting 10s...');
+  await new Promise(r => setTimeout(r, 10000));
+  console.log('Done!');
 
   return collectionAddr.toString();
 }
 
-module.exports = { deployCollection, getNftItemCode, getCollectionCode };
+async function getNftItemCode() {
+  const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
+  const client = getClient(isTestnet);
+  const state = await client.getContractState(Address.parse(KNOWN_NFT_ITEM));
+  return state.code;
+}
+
+module.exports = { deployCollection, getNftItemCode };
