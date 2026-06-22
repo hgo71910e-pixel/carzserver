@@ -1,45 +1,27 @@
-const { AssetsSDK, PinataStorageParams } = require('@ton-community/assets-sdk');
-const { TonClient, WalletContractV4 } = require('@ton/ton');
-const { mnemonicToPrivateKey } = require('@ton/crypto');
+const { AssetsSDK, createApi, createWalletV4, importKey } = require('@ton-community/assets-sdk');
+const { Address } = require('@ton/ton');
 
 async function getSDK() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-  const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
-  const keyPair = await mnemonicToPrivateKey(mnemonic);
+  const api = await createApi(isTestnet ? 'testnet' : 'mainnet');
+  const keyPair = await importKey(process.env.TON_MINTER_MNEMONIC || '');
+  const wallet = await createWalletV4(keyPair, api);
 
-  const client = new TonClient({
-    endpoint: isTestnet
-      ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
-      : 'https://toncenter.com/api/v2/jsonRPC',
-    apiKey: process.env.TON_API_KEY || ''
-  });
+  const storage = {
+    pinataApiKey: process.env.PINATA_API_KEY || '',
+    pinataSecretKey: process.env.PINATA_SECRET || ''
+  };
 
-  const wallet = client.open(
-    WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 })
-  );
-
-  const sdk = AssetsSDK.create({
-    api: isTestnet ? 'testnet' : 'mainnet',
-    wallet,
-    storage: new PinataStorageParams({
-      pinataApiKey: process.env.PINATA_API_KEY || '',
-      pinataSecretApiKey: process.env.PINATA_SECRET || '',
-      pinataJWT: process.env.PINATA_JWT || ''
-    })
-  });
-
-  return { sdk, keyPair };
+  const sdk = await AssetsSDK.create({ api, storage, wallet });
+  return { sdk };
 }
 
 async function deployCollection(name, description) {
   const { sdk } = await getSDK();
-  console.log('Deploying collection via assets-sdk...');
+  console.log('Deploying NFT collection...');
 
   const collection = await sdk.createNftCollection({
-    collectionContent: {
-      name: name || 'CarzPlate',
-      description: description || 'CarzPlate NFT Collection - Номерные знаки'
-    },
+    collectionContent: { name, description },
     commonContent: ''
   });
 
