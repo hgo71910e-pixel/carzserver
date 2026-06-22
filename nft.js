@@ -1,26 +1,7 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress } = require('@ton/ton');
-const { mnemonicToPrivateKey } = require('@ton/crypto');
+const { getSDK } = require('./nft-collection');
+const { Address } = require('@ton/ton');
 const FormData = require('form-data');
 const https = require('https');
-
-function getClient() {
-  const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-  return new TonClient({
-    endpoint: isTestnet
-      ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
-      : 'https://toncenter.com/api/v2/jsonRPC',
-    apiKey: process.env.TON_API_KEY || ''
-  });
-}
-
-async function getMinterWallet() {
-  const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
-  if (mnemonic.length < 24) throw new Error('TON_MINTER_MNEMONIC not set');
-  const keyPair = await mnemonicToPrivateKey(mnemonic);
-  const client = getClient();
-  const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
-  return { wallet, keyPair, client };
-}
 
 async function uploadToPinata(buffer, filename, mimeType) {
   const jwt = process.env.PINATA_JWT;
@@ -95,21 +76,6 @@ function generatePlateImage(chars, country, region) {
   return Buffer.from(svg, 'utf-8');
 }
 
-// Build NFT item init data (TEP-62)
-function buildNftItemData(index, collectionAddress, ownerAddress, contentUrl) {
-  return beginCell()
-    .storeUint(index, 64)
-    .storeAddress(Address.parse(collectionAddress))
-    .storeAddress(Address.parse(ownerAddress))
-    .storeRef(
-      beginCell()
-        .storeUint(1, 8) // off-chain
-        .storeStringTail(contentUrl)
-        .endCell()
-    )
-    .endCell();
-}
-
 async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftIndex }) {
   try {
     const collectionAddress = process.env.TON_COLLECTION_ADDRESS;
@@ -117,9 +83,7 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
 
     console.log('Minting NFT for plate', plateKey, 'index', nftIndex);
 
-    const { wallet, keyPair, client } = await getMinterWallet();
-
-    // 1. Generate and upload image
+    // 1. Upload image
     const imgBuffer = generatePlateImage(chars, country, region);
     const imageUrl = await uploadToPinata(imgBuffer, plateKey + '.svg', 'image/svg+xml');
     console.log('Image uploaded:', imageUrl);
@@ -127,7 +91,7 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
     // 2. Upload metadata
     const metadata = {
       name: 'Plate ' + (chars || '').toUpperCase() + (region ? ' ' + region : ''),
-      description: 'CarzPlate NFT. Country: ' + (country || '') + '. Region: ' + (region || 'none') + '.',
+      description: 'CarzPlate NFT. Country: ' + (country || '') + '.',
       image: imageUrl,
       attributes: [
         { trait_type: 'Country', value: country || '' },
@@ -138,44 +102,26 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
     const metadataUrl = await uploadJsonToPinata(metadata, plateKey + '.json');
     console.log('Metadata uploaded:', metadataUrl);
 
-    // 3. Build NFT mint message
-    const nftData = buildNftItemData(nftIndex, collectionAddress, ownerAddress, metadataUrl);
-    console.log('NFT index:', nftIndex);
+    // 3. Mint via assets-sdk
+    const { sdk } = await getSDK();
+    const collection = sdk.openNftCollection(Address.parse(collectionAddress));
 
-    // 4. Mint via collection contract (op = 1)
-    const mintBody = beginCell()
-      .storeUint(1, 32) // op: deploy new nft
-      .storeUint(0, 64) // query_id
-      .storeUint(nftIndex, 64) // item_index
-      .storeCoins(toNano('0.05')) // amount for nft
-      .storeRef(nftData)
-      .endCell();
-
-    const seqno = await wallet.getSeqno();
-    console.log('Seqno:', seqno);
-
-    await wallet.sendTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [
-        internal({
-          to: Address.parse(collectionAddress),
-          value: toNano('0.08'),
-          body: mintBody,
-          bounce: true
-        })
-      ]
+    console.log('Minting item via assets-sdk...');
+    const nftItem = await collection.mintItem({
+      itemOwnerAddress: Address.parse(ownerAddress),
+      itemContent: {
+        uri: metadataUrl
+      }
     });
 
-    console.log('Mint TX sent, waiting...');
     await new Promise(r => setTimeout(r, 8000));
-    console.log('Mint complete. NFT:', nftAddr.toString());
 
+    const nftAddr = nftItem?.address?.toString() || collectionAddress + '_' + nftIndex;
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-    const nftAddr = collectionAddress + '_item_' + nftIndex;
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
-      + '/address/' + collectionAddress;
+      + '/address/' + nftAddr;
 
+    console.log('Mint complete! NFT:', nftAddr);
     return {
       ok: true,
       nft_address: nftAddr,

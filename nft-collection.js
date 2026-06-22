@@ -1,62 +1,51 @@
-const { TonClient, WalletContractV4, internal, toNano, Address, beginCell, contractAddress, Cell } = require('@ton/ton');
+const { AssetsSDK, PinataStorageParams } = require('@ton-community/assets-sdk');
+const { TonClient, WalletContractV4 } = require('@ton/ton');
 const { mnemonicToPrivateKey } = require('@ton/crypto');
 
-function getClient(isTestnet) {
-  return new TonClient({
+async function getSDK() {
+  const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
+  const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
+  const keyPair = await mnemonicToPrivateKey(mnemonic);
+
+  const client = new TonClient({
     endpoint: isTestnet
       ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
       : 'https://toncenter.com/api/v2/jsonRPC',
     apiKey: process.env.TON_API_KEY || ''
   });
+
+  const wallet = client.open(
+    WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 })
+  );
+
+  const sdk = AssetsSDK.create({
+    api: isTestnet ? 'testnet' : 'mainnet',
+    wallet,
+    storage: new PinataStorageParams({
+      pinataApiKey: process.env.PINATA_API_KEY || '',
+      pinataSecretApiKey: process.env.PINATA_SECRET || '',
+      pinataJWT: process.env.PINATA_JWT || ''
+    })
+  });
+
+  return { sdk, keyPair };
 }
 
-async function getMinterWallet(client) {
-  const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
-  const keyPair = await mnemonicToPrivateKey(mnemonic);
-  const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
-  return { wallet, keyPair };
+async function deployCollection(name, description) {
+  const { sdk } = await getSDK();
+  console.log('Deploying collection via assets-sdk...');
+
+  const collection = await sdk.createNftCollection({
+    collectionContent: {
+      name: name || 'CarzPlate',
+      description: description || 'CarzPlate NFT Collection - Номерные знаки'
+    },
+    commonContent: ''
+  });
+
+  const address = collection.address.toString();
+  console.log('Collection deployed:', address);
+  return address;
 }
 
-async function deployCollection(collectionContentUrl) {
-  const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
-  const client = getClient(isTestnet);
-  const { wallet, keyPair } = await getMinterWallet(client);
-  const ownerAddress = wallet.address.toString();
-  console.log('Owner:', ownerAddress);
-
-  // Load verified NFT contracts from npm package
-  let NftCollection;
-  try {
-    // Try @ton-community/nft-sdk first
-    const sdk = require('@ton-community/nft-sdk');
-    NftCollection = sdk.NftCollection || sdk.default?.NftCollection;
-  } catch(e) {
-    console.log('nft-sdk not available:', e.message);
-  }
-
-  if (NftCollection) {
-    const collection = new NftCollection({
-      ownerAddress: Address.parse(ownerAddress),
-      royaltyPercent: 0,
-      royaltyAddress: Address.parse(ownerAddress),
-      nextItemIndex: 0,
-      collectionContentUrl,
-      commonContentUrl: ''
-    });
-    const stateInit = collection.stateInit;
-    const collectionAddr = contractAddress(0, stateInit);
-    console.log('Collection address:', collectionAddr.toString());
-    const seqno = await wallet.getSeqno();
-    await wallet.sendTransfer({
-      seqno,
-      secretKey: keyPair.secretKey,
-      messages: [internal({ to: collectionAddr, value: toNano('0.1'), init: stateInit, body: beginCell().endCell(), bounce: false })]
-    });
-    await new Promise(r => setTimeout(r, 10000));
-    return collectionAddr.toString();
-  }
-
-  throw new Error('@ton-community/nft-sdk not installed. Run: npm install @ton-community/nft-sdk');
-}
-
-module.exports = { deployCollection };
+module.exports = { deployCollection, getSDK };
