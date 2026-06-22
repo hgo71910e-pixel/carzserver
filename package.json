@@ -12,6 +12,7 @@
     "socket.io": "^4.7.5",
     "@ton/ton": "^13.11.2",
     "@ton/crypto": "^3.2.0",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "@ton-community/nft-sdk": "^0.1.1"
   }
 }
