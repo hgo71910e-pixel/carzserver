@@ -1,24 +1,16 @@
 const { AssetsSDK, createApi, createSender, importKey } = require('@ton-community/assets-sdk');
+const { Address } = require('@ton/ton');
 
 async function getSDK() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
   const api = await createApi(isTestnet ? 'testnet' : 'mainnet');
   const keyPair = await importKey(process.env.TON_MINTER_MNEMONIC || '');
 
-  // Try different wallet type names
   let sender;
-  const types = ['v4r2', 'v4', 'wallet-v4', 'highload-v2', 'WalletV4'];
-  for (const t of types) {
-    try {
-      sender = await createSender(t, keyPair, api);
-      console.log('Wallet type works:', t);
-      break;
-    } catch(e) {
-      console.log('Type', t, 'failed:', e.message);
-    }
+  for (const t of ['v4r2', 'v4', 'highload-v2']) {
+    try { sender = await createSender(t, keyPair, api); break; } catch(e) {}
   }
-
-  if (!sender) throw new Error('No working wallet type found');
+  if (!sender) throw new Error('No working wallet type');
 
   const storage = {
     pinataApiKey: process.env.PINATA_API_KEY || '',
@@ -26,17 +18,15 @@ async function getSDK() {
   };
 
   const sdk = await AssetsSDK.create({ api, storage, sender });
-  console.log('SDK methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(sdk)).join(', '));
   return { sdk };
 }
 
 async function deployCollection(name, description) {
   const { sdk } = await getSDK();
-  console.log('SDK keys:', Object.keys(sdk));
-  console.log('SDK proto:', Object.getOwnPropertyNames(Object.getPrototypeOf(sdk)).join(', '));
-  const allExports = require('@ton-community/assets-sdk');
-  console.log('Package exports:', Object.keys(allExports).join(', '));
-  console.log('Deploying NFT collection...');
+
+  // Debug: show available methods
+  const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(sdk));
+  console.log('SDK methods:', methods.join(', '));
 
   const collection = await sdk.createNftCollection({
     collectionContent: { name, description },

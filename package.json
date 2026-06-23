@@ -13,6 +13,6 @@
     "@ton/ton": "^13.11.2",
     "@ton/crypto": "^3.2.0",
     "form-data": "^4.0.0",
-    "@ton-community/assets-sdk": "0.0.4-beta.3"
+    "@ton-community/assets-sdk": "0.0.5"
   }
 }
