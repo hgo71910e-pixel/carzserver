@@ -25,7 +25,8 @@ async function getSDK() {
     pinataSecretKey: process.env.PINATA_SECRET || ''
   };
 
-  const sdk = AssetsSDK.create({ api, storage, sender });
+  const sdk = await AssetsSDK.create({ api, storage, sender });
+  console.log('SDK methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(sdk)).join(', '));
   return { sdk };
 }
 
