@@ -106,16 +106,14 @@ async function mintNFT({ plateKey, chars, country, region, ownerAddress, nftInde
     const { sdk } = await getSDK();
     const collection = sdk.openNftCollection(Address.parse(collectionAddress));
 
-    console.log('Minting item via assets-sdk...');
-    const nftItem = await collection.mintNft({
+    console.log('Minting NFT item...');
+    const nftItem = await collection.deployNftItem({
       owner: Address.parse(ownerAddress),
-      content: { uri: metadataUrl },
-      amount: BigInt('50000000') // 0.05 TON
+      content: { uri: metadataUrl }
     });
 
     await new Promise(r => setTimeout(r, 8000));
-
-    const nftAddr = (nftItem?.address || nftItem)?.toString() || collectionAddress + '_' + nftIndex;
+    const nftAddr = (nftItem?.address)?.toString() || collectionAddress + '_' + nftIndex;
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const explorerUrl = (isTestnet ? 'https://testnet.tonscan.org' : 'https://tonscan.org')
       + '/address/' + nftAddr;

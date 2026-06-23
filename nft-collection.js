@@ -23,31 +23,12 @@ async function getSDK() {
 
 async function deployCollection(name, description) {
   const { sdk } = await getSDK();
+  console.log('Deploying NFT collection...');
 
-  // Show what's actually available
-  const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(sdk));
-  const own = Object.keys(sdk);
-  console.log('SDK proto methods:', proto.join(', '));
-  console.log('SDK own keys:', own.join(', '));
-
-  // Try all possible method names
-  const possibleMethods = ['createNftCollection', 'createNFTCollection', 'deployNftCollection', 
-    'createCollection', 'deployCollection', 'nftCollection', 'createNft'];
-  for (const m of possibleMethods) {
-    if (typeof sdk[m] === 'function') {
-      console.log('Found method:', m);
-    }
-  }
-
-  // Try calling whatever collection method exists
-  let collection;
-  if (typeof sdk.createNftCollection === 'function') {
-    collection = await sdk.createNftCollection({ collectionContent: { name, description }, commonContent: '' });
-  } else if (typeof sdk.createNFTCollection === 'function') {
-    collection = await sdk.createNFTCollection({ collectionContent: { name, description }, commonContent: '' });
-  } else {
-    throw new Error('No collection method found. Available: ' + proto.concat(own).join(', '));
-  }
+  const collection = await sdk.deployNftCollection({
+    collectionContent: { name, description },
+    commonContent: ''
+  });
 
   const address = collection.address.toString();
   console.log('Collection deployed:', address);
