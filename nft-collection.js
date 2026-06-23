@@ -4,7 +4,7 @@ async function getSDK() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
   const api = await createApi(isTestnet ? 'testnet' : 'mainnet');
   const keyPair = await importKey(process.env.TON_MINTER_MNEMONIC || '');
-  const sender = await createSender('wallet-v4', keyPair, api);
+  const sender = await createSender('v4', keyPair, api);
 
   const storage = {
     pinataApiKey: process.env.PINATA_API_KEY || '',
