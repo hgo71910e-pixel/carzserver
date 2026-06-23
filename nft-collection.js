@@ -32,6 +32,10 @@ async function getSDK() {
 
 async function deployCollection(name, description) {
   const { sdk } = await getSDK();
+  console.log('SDK keys:', Object.keys(sdk));
+  console.log('SDK proto:', Object.getOwnPropertyNames(Object.getPrototypeOf(sdk)).join(', '));
+  const allExports = require('@ton-community/assets-sdk');
+  console.log('Package exports:', Object.keys(allExports).join(', '));
   console.log('Deploying NFT collection...');
 
   const collection = await sdk.createNftCollection({
