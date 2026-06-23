@@ -1,18 +1,17 @@
-const { AssetsSDK, createApi, createWalletV4, importKey } = require('@ton-community/assets-sdk');
-const { Address } = require('@ton/ton');
+const { AssetsSDK, createApi, createSender, importKey } = require('@ton-community/assets-sdk');
 
 async function getSDK() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
   const api = await createApi(isTestnet ? 'testnet' : 'mainnet');
   const keyPair = await importKey(process.env.TON_MINTER_MNEMONIC || '');
-  const wallet = await createWalletV4(keyPair, api);
+  const sender = await createSender('wallet-v4', keyPair, api);
 
   const storage = {
     pinataApiKey: process.env.PINATA_API_KEY || '',
     pinataSecretKey: process.env.PINATA_SECRET || ''
   };
 
-  const sdk = await AssetsSDK.create({ api, storage, wallet });
+  const sdk = AssetsSDK.create({ api, storage, sender });
   return { sdk };
 }
 
