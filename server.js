@@ -457,15 +457,17 @@ app.post('/track', async (req, res) => {
 
 // ── Задеплоить коллекцию (один раз, GET чтобы открыть в браузере) ──
 app.get('/nft/deploy-collection', async (req, res) => {
+  // Отвечаем сразу что начали, результат смотри в логах
+  res.json({ ok: true, message: 'Deploy started, check Railway logs in 30 seconds for collection address' });
+  
   try {
     const { deployCollection } = require('./nft-collection');
-    const collectionUrl = 'https://ipfs.io/ipfs/bafkreihaclz47kegqv5dbzx3uef6and3bkbx5g7ioefv4uqptxpam';
-    console.log('Deploying collection...');
-    const address = await deployCollection(collectionUrl);
-    res.json({ ok: true, address, next_step: 'Add to Railway: TON_COLLECTION_ADDRESS=' + address });
+    console.log('Starting collection deploy...');
+    const address = await deployCollection('CarzPlate', 'CarzPlate NFT Collection');
+    console.log('COLLECTION ADDRESS:', address);
+    console.log('Add to Railway: TON_COLLECTION_ADDRESS=' + address);
   } catch(e) {
     console.error('Deploy error:', e.message);
-    res.json({ ok: false, error: e.message });
   }
 });
 
