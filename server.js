@@ -494,7 +494,7 @@ app.get('/nft/wallet', async (req, res) => {
 
     const addresses = {};
     for (const [name, w] of Object.entries(wallets)) {
-      addresses[name] = w.address.toString();
+      addresses[name] = w.address.toString({ bounceable: false });
     }
 
     res.json({ ok: true, addresses, network: isTestnet ? 'testnet' : 'mainnet' });
