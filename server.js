@@ -486,18 +486,11 @@ app.get('/nft/wallet', async (req, res) => {
       apiKey: process.env.TON_API_KEY || ''
     });
 
-    const wallets = {
-      v4r2: WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }),
-      v3r2: WalletContractV3R2.create({ publicKey: keyPair.publicKey, workchain: 0 }),
-      v3r1: WalletContractV3R1.create({ publicKey: keyPair.publicKey, workchain: 0 }),
-    };
-
-    const addresses = {};
-    for (const [name, w] of Object.entries(wallets)) {
-      addresses[name] = w.address.toString({ bounceable: false });
-    }
-
-    res.json({ ok: true, addresses, network: isTestnet ? 'testnet' : 'mainnet' });
+    const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
+    const address = wallet.address.toString({ bounceable: false });
+    let balance = '0';
+    try { balance = (await client.getBalance(wallet.address)).toString(); } catch(e) {}
+    res.json({ ok: true, address, balance, network: isTestnet ? 'testnet' : 'mainnet' });
   } catch(e) {
     res.json({ ok: false, error: e.message });
   }
