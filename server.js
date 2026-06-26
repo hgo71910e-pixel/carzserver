@@ -475,7 +475,7 @@ app.get('/nft/deploy-collection', async (req, res) => {
 app.get('/nft/wallet', async (req, res) => {
   try {
     const { mnemonicToPrivateKey } = require('@ton/crypto');
-    const { WalletContractV4, TonClient } = require('@ton/ton');
+    const { WalletContractV4, WalletContractV3R2, WalletContractV3R1, TonClient } = require('@ton/ton');
     const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
     const keyPair = await mnemonicToPrivateKey(mnemonic);
@@ -485,11 +485,19 @@ app.get('/nft/wallet', async (req, res) => {
         : 'https://toncenter.com/api/v2/jsonRPC',
       apiKey: process.env.TON_API_KEY || ''
     });
-    const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
-    const address = wallet.address.toString();
-    let balance = '0';
-    try { balance = (await client.getBalance(wallet.address)).toString(); } catch(e) {}
-    res.json({ ok: true, address, balance, network: isTestnet ? 'testnet' : 'mainnet' });
+
+    const wallets = {
+      v4r2: WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }),
+      v3r2: WalletContractV3R2.create({ publicKey: keyPair.publicKey, workchain: 0 }),
+      v3r1: WalletContractV3R1.create({ publicKey: keyPair.publicKey, workchain: 0 }),
+    };
+
+    const addresses = {};
+    for (const [name, w] of Object.entries(wallets)) {
+      addresses[name] = w.address.toString();
+    }
+
+    res.json({ ok: true, addresses, network: isTestnet ? 'testnet' : 'mainnet' });
   } catch(e) {
     res.json({ ok: false, error: e.message });
   }
