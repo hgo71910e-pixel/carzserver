@@ -1,16 +1,40 @@
-const { AssetsSDK, createApi, createSender, importKey } = require('@ton-community/assets-sdk');
-const { Address } = require('@ton/ton');
+const { AssetsSDK, createApi, createSender } = require('@ton-community/assets-sdk');
+const { TonClient, WalletContractV4 } = require('@ton/ton');
+const { mnemonicToPrivateKey } = require('@ton/crypto');
 
 async function getSDK() {
   const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
   const api = await createApi(isTestnet ? 'testnet' : 'mainnet');
-  const keyPair = await importKey(process.env.TON_MINTER_MNEMONIC || '');
 
-  let sender;
-  for (const t of ['v4r2', 'v4', 'highload-v2']) {
-    try { sender = await createSender(t, keyPair, api); break; } catch(e) {}
-  }
-  if (!sender) throw new Error('No working wallet type');
+  // Используем тот же метод что работал раньше
+  const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
+  const keyPair = await mnemonicToPrivateKey(mnemonic);
+
+  const client = new TonClient({
+    endpoint: isTestnet
+      ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
+      : 'https://toncenter.com/api/v2/jsonRPC',
+    apiKey: process.env.TON_API_KEY || ''
+  });
+
+  const wallet = client.open(
+    WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 })
+  );
+
+  console.log('Minter wallet address:', wallet.address.toString());
+
+  // Создаём sender из нашего кошелька
+  const sender = {
+    send: async (args) => {
+      const seqno = await wallet.getSeqno().catch(() => 0);
+      await wallet.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        messages: [args]
+      });
+    },
+    address: wallet.address
+  };
 
   const storage = {
     pinataApiKey: process.env.PINATA_API_KEY || '',
@@ -18,7 +42,7 @@ async function getSDK() {
   };
 
   const sdk = await AssetsSDK.create({ api, storage, sender });
-  return { sdk };
+  return { sdk, wallet, keyPair };
 }
 
 async function deployCollection(name, description) {
