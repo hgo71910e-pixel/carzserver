@@ -50,8 +50,14 @@ async function deployCollection(name, description) {
   console.log('Deploying NFT collection...');
 
   const collection = await sdk.deployNftCollection({
-    collectionContent: { name, description },
-    commonContent: ''
+    collectionContent: {
+      type: 'offchain',
+      uri: 'https://ipfs.io/ipfs/bafkreihaclz47kegqv5dbzx3uef6and3bkbx5g7ioefv4uqptxpam'
+    },
+    commonContent: {
+      type: 'offchain',
+      uri: ''
+    }
   });
 
   const address = collection.address.toString();
