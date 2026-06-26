@@ -474,17 +474,22 @@ app.get('/nft/deploy-collection', async (req, res) => {
 // ── Адрес кошелька минтера ──
 app.get('/nft/wallet', async (req, res) => {
   try {
-    const { mintNFT } = require('./nft');
     const { mnemonicToPrivateKey } = require('@ton/crypto');
     const { WalletContractV4, TonClient } = require('@ton/ton');
+    const isTestnet = (process.env.TON_NETWORK || 'testnet') === 'testnet';
     const mnemonic = (process.env.TON_MINTER_MNEMONIC || '').trim().split(/\s+/);
     const keyPair = await mnemonicToPrivateKey(mnemonic);
-    const client = new TonClient({ endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC' });
+    const client = new TonClient({
+      endpoint: isTestnet
+        ? 'https://testnet.toncenter.com/api/v2/jsonRPC'
+        : 'https://toncenter.com/api/v2/jsonRPC',
+      apiKey: process.env.TON_API_KEY || ''
+    });
     const wallet = client.open(WalletContractV4.create({ publicKey: keyPair.publicKey, workchain: 0 }));
     const address = wallet.address.toString();
     let balance = '0';
     try { balance = (await client.getBalance(wallet.address)).toString(); } catch(e) {}
-    res.json({ ok: true, address, balance });
+    res.json({ ok: true, address, balance, network: isTestnet ? 'testnet' : 'mainnet' });
   } catch(e) {
     res.json({ ok: false, error: e.message });
   }
