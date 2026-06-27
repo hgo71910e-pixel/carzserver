@@ -48,8 +48,9 @@ async function deployCollection(name, description) {
   const { sdk } = await getSDK();
   console.log('Deploying NFT collection...');
 
-  const collection = await sdk.createNftCollection({
+  const collection = await sdk.deployNftCollection({
     collectionContent: {
+      uri: '',
       name,
       description
     },
