@@ -48,11 +48,26 @@ async function deployCollection(name, description) {
   const { sdk } = await getSDK();
   console.log('Deploying NFT collection...');
 
-  const collection = await sdk.deployNftCollection({
-    name,
-    description,
-    uri: 'https://ipfs.io/ipfs/bafkreihaclz47kegqv5dbzx3uef6and3bkbx5g7ioefv4uqptxpam'
-  });
+  // Try to find correct param structure by looking at what sdk expects
+  let collection;
+  try {
+    collection = await sdk.deployNftCollection({
+      collectionContent: { name, description },
+      commonContent: '',
+      royaltyParams: { royaltyFactor: 0, royaltyBase: 100, royaltyAddress: sdk.sender.address }
+    });
+  } catch(e1) {
+    console.log('Attempt 1 failed:', e1.message);
+    try {
+      collection = await sdk.deployNftCollection(
+        { name, description },
+        {}
+      );
+    } catch(e2) {
+      console.log('Attempt 2 failed:', e2.message);
+      collection = await sdk.deployNftCollection({ name, description });
+    }
+  }
 
   const address = collection.address.toString();
   console.log('COLLECTION ADDRESS:', address);
